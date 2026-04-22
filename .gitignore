@@ -241,3 +241,10 @@ log
 log.txt
 **/log.txt
 CLAUDE.md
+
+# ARC-AGI-3 toolkit local game state
+environment_files/
+**/environment_files/
+
+# Office lock files
+~$*

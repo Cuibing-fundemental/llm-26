@@ -632,7 +632,7 @@ School of Data Science, Fudan University<br>
 ---
 
 <!-- page 25 | slides: 51, 52 -->
-<div class="page-header">Reasoning &amp; References</div>
+<div class="page-header">Reasoning &amp; Humanity's Last Exam</div>
 <div class="two-panes">
 <div class="pane">
 <span class="slide-badge">Slide 51</span>
@@ -641,6 +641,87 @@ School of Data Science, Fudan University<br>
 </div>
 <div class="pane">
 <span class="slide-badge">Slide 52</span>
+<div class="pane-title">Humanity's Last Exam (HLE) — Motivation</div>
+<div class="pane-text">
+<p>SOTA LLMs now exceed <strong>90% on MMLU</strong>, saturating popular benchmarks and obscuring real frontier capabilities.</p>
+<p>HLE is designed as the <em>final closed-ended academic benchmark</em> at the frontier of human knowledge — 2,500 expert-written questions across 100+ subjects, multi-modal, with unambiguous, verifiable answers.</p>
+<ul>
+<li>Multiple-choice + exact-match → automated grading</li>
+<li>Resistant to simple internet lookup / DB retrieval</li>
+<li>Emphasis on world-class mathematics &amp; deep reasoning</li>
+</ul>
+<p style="margin-top:6px"><em>Phan, Gatti, Han, Li, et al., "Humanity's Last Exam", 2025</em></p>
+</div>
+<div class="source-link">https://lastexam.ai · https://arxiv.org/abs/2501.14249</div>
+</div>
+</div>
+
+---
+
+<!-- page 26 | slides: 53, 54 -->
+<div class="page-header">HLE — Dataset Collection</div>
+<div class="two-panes">
+<div class="pane">
+<span class="slide-badge">Slide 53</span>
+<div class="pane-title">Global Expert Effort</div>
+<div class="pane-text">
+<p>HLE was crowd-sourced from <strong>~1,000 subject-matter experts</strong> at <strong>500+ institutions</strong> across <strong>50 countries</strong> — mostly professors, researchers, and graduate-degree holders.</p>
+<ul>
+<li>Questions require graduate-level expertise or highly specific knowledge</li>
+<li>Answers must be short, unambiguous, and accepted by domain experts</li>
+<li>No open-ended / subjective / WMD content</li>
+<li>Each question ships with a detailed solution</li>
+</ul>
+<p><strong>$500K prize pool</strong>: $5K for each top-50 question, $500 for each of the next 500, plus paper co-authorship.</p>
+</div>
+</div>
+<div class="pane">
+<span class="slide-badge">Slide 54</span>
+<div class="pane-title">Review Process — Quality Control</div>
+<div class="pane-text">
+<p><strong>Stage 1 — LLM difficulty check.</strong> Questions first tested against frontier LLMs; only those the models <em>cannot</em> solve advance.</p>
+<ul>
+<li>70,000+ attempts logged</li>
+<li>~13,000 questions passed to expert review</li>
+</ul>
+<p><strong>Stage 2 — Two-round expert review</strong> (graduate-degree reviewers):</p>
+<ul>
+<li>Round 1: 1–3 reviewers give iterative feedback</li>
+<li>Round 2: organizers / expert reviewers approve final set</li>
+</ul>
+<p>A <strong>private held-out set</strong> is maintained alongside the public release to detect overfitting / gaming.</p>
+</div>
+</div>
+</div>
+
+---
+
+<!-- page 27 | slides: 55, 56 -->
+<div class="page-header">HLE Results &amp; References</div>
+<div class="two-panes">
+<div class="pane">
+<span class="slide-badge">Slide 55</span>
+<div class="pane-title">HLE — Frontier Model Results</div>
+<div class="pane-text">
+<p>All frontier models show <strong>low accuracy</strong> and <strong>high calibration error</strong> (hallucination):</p>
+<table style="font-size:0.78em; border-collapse:collapse; margin-top:4px">
+<thead><tr><th style="text-align:left;padding:2px 8px">Model</th><th style="padding:2px 8px">Acc ↑</th><th style="padding:2px 8px">Calib. err ↓</th></tr></thead>
+<tbody>
+<tr><td style="padding:2px 8px">GPT-4o</td><td style="text-align:center">2.7%</td><td style="text-align:center">89%</td></tr>
+<tr><td style="padding:2px 8px">Grok 2</td><td style="text-align:center">3.0%</td><td style="text-align:center">87%</td></tr>
+<tr><td style="padding:2px 8px">Claude 3.5 Sonnet</td><td style="text-align:center">4.1%</td><td style="text-align:center">84%</td></tr>
+<tr><td style="padding:2px 8px">Gemini 1.5 Pro</td><td style="text-align:center">4.6%</td><td style="text-align:center">88%</td></tr>
+<tr><td style="padding:2px 8px">Gemini 2.0 Flash Thinking</td><td style="text-align:center">6.6%</td><td style="text-align:center">82%</td></tr>
+<tr><td style="padding:2px 8px">o1</td><td style="text-align:center">8.0%</td><td style="text-align:center">83%</td></tr>
+<tr><td style="padding:2px 8px">DeepSeek-R1*</td><td style="text-align:center">8.5%</td><td style="text-align:center">73%</td></tr>
+<tr><td style="padding:2px 8px">o3-mini (high)*</td><td style="text-align:center">13.4%</td><td style="text-align:center">80%</td></tr>
+</tbody>
+</table>
+<p style="font-size:0.75em; margin-top:4px">* text-only subset. Reasoning models use 8K+ completion tokens on average. Authors project models may exceed <strong>50% accuracy by end of 2025</strong>.</p>
+</div>
+</div>
+<div class="pane">
+<span class="slide-badge">Slide 56</span>
 <div class="pane-title">References</div>
 <div class="pane-text">
 <ul>
@@ -654,8 +735,10 @@ School of Data Science, Fudan University<br>
 <li>[8] https://winogrande.allenai.org/</li>
 <li>[9] https://allenai.org/data/drop</li>
 <li>[10] https://crfm.stanford.edu/helm/mmlu/latest/#/leaderboard</li>
+<li>[11] Humanity's Last Exam — https://arxiv.org/abs/2501.14249 · https://lastexam.ai</li>
 </ul>
 <p style="margin-top:12px; font-weight:700; color:#7c3aed">Next topic: LLMs</p>
+</div>
 </div>
 </div>
 </div>
