@@ -1,0 +1,6 @@
+{
+    python.defaultInterpreterPath: /mnt/data/baojian/backup-git/llm-26/lecture-08-sft-rm-ppo/.venv/bin/python,
+    python.pythonPath: /mnt/data/baojian/backup-git/llm-26/lecture-08-sft-rm-ppo/.venv/bin/python,
+    jupyter.kernels.filter: [],
+    jupyter.kernelSpecFinderInterrupt: false
+}

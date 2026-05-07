@@ -1,0 +1,15 @@
+# Model checkpoints
+checkpoints/
+
+# Weights & Biases logs
+wandb/
+
+# Python virtual environment
+.venv/
+
+# Jupyter runtime
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
