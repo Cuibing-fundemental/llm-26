@@ -33,9 +33,9 @@
     by answering people's questions.
   </div>
 
-  <div class="twocol" style="--left:52%;">
+  <div class="twocol" style="--left:45%;">
     <div>
-      <ul class="outline-bullets med">
+      <ul class="outline-bullets small">
         <li>By 1961, computers answered baseball statistics questions</li>
         <li>IBM Watson won <em>Jeopardy!</em> in 2011 — at human level</li>
         <li>Modern search engines are deeply integrated with LLMs</li>
@@ -43,13 +43,7 @@
       </ul>
     </div>
     <div>
-      <div style="border:2px solid #1f4e9a; border-radius:14px; padding:18px 20px; background:#f0f4fb; font-size:30px; line-height:1.5;">
-        <div style="font-weight:900; color:#1f4e9a; margin-bottom:10px;">Timeline</div>
-        <div style="margin-bottom:8px;">🔍 <b>1961</b> — First QA systems</div>
-        <div style="margin-bottom:8px;">🏆 <b>2011</b> — Watson wins Jeopardy!</div>
-        <div style="margin-bottom:8px;">🤖 <b>2020</b> — GPT-3 prompting</div>
-        <div>🚀 <b>2025</b> — GPT-5.1, Claude 4, Gemini 2.5</div>
-      </div>
+      <img src="./media/slide02_img4.png" style="width:100%; border-radius:12px; box-shadow:0 4px 18px rgba(0,0,0,0.15);" />
     </div>
   </div>
 </section>
