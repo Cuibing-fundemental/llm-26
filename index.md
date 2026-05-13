@@ -193,7 +193,7 @@ Use of AI coding assistants **is permitted**. However, you should explicitly att
 
 > In this lecture, we introduce BERT and the bidirectional Transformer encoder architecture trained via **masked language modeling**. Unlike causal LMs, BERT produces contextual embeddings that can be fine-tuned for downstream tasks such as classification and named entity recognition.
 > - **Readings:**
->   - <a href="papers/lecture-09-readings-0-JM_Book_Chapter_9.pdf" target="_blank" rel="noopener">JM Book Chapter 9: Masked Language Models</a>
+>   - <a href="papers/lecture-08-readings-0-JM_Book_Chapter_9.pdf" target="_blank" rel="noopener">JM Book Chapter 9: Masked Language Models</a>
 >   - <a href="papers/lecture-08-readings-1-BERT.pdf" target="_blank" rel="noopener">BERT (2018)</a>
 >   - <a href="papers/lecture-08-readings-2-SpanBERT.pdf" target="_blank" rel="noopener">SpanBERT (2020)</a>
 > - **Excercise: <a href="https://github.com/baojian/llm-26/blob/main/lecture-07-bert-benchmarks/lecture-07-bert-benchmarks.ipynb" target="_blank" rel="noopener">lecture-07-bert-benchmarks.ipynb</a>**
