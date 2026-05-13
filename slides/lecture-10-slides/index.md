@@ -1,11 +1,11 @@
 <section class="title">
   <div class="title-main">Lecture 10 – Information Retrieval and RAG</div>
-  <div class="title-sub">CS40008.01</div>
+  <div class="title-sub">CS40008.01: NLP & LLMs</div>
   <div class="title-meta">
     <div>Baojian Zhou</div>
     <div>School of Data Science</div>
     <div>Fudan University</div>
-    <div>05/21/2026</div>
+    <div>05/14/2026</div>
   </div>
 </section>
 
