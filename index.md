@@ -220,20 +220,18 @@ Use of AI coding assistants **is permitted**. However, you should explicitly att
 > - **Content:** related work investigation, your approach, and preliminary results
 > - **[Full project details](https://baojian.github.io/llm-26/slides/final-project/index.html)**
 >
-> #### Final Report — Due 06/25/2026, 23:59 (Week 17)
+> **Final Report — Due 06/25/2026, 23:59 (Week 17)**
 > - Written in **English or Chinese**
 > - Maximum **7 pages** of main content (excluding references)
 > - Format: **[ACL template](https://www.overleaf.com/latex/templates/association-for-computational-linguistics-acl-conference/jvxskxpnznfj)**
 > - Submit via [elearning](https://elearning.fudan.edu.cn/)
 >
-> #### Grading breakdown
-> | Component | Weight | Criteria |
-> |-----------|--------|----------|
-> | Proposal | 5% | Clarity, feasibility, relevance, innovation |
-> | Presentation | 20% | Clarity, related work coverage |
-> | Programming & algorithm | 25% | Reasonableness and soundness |
-> | Performance | 20% | Results and analysis |
-> | Report | 30% | Organization, analysis, discussion |
+> **Grading breakdown**
+> - Proposal **(5%)**: clarity, feasibility, relevance, innovation
+> - Presentation **(20%)**: clarity, related work coverage
+> - Programming & algorithm **(25%)**: reasonableness and soundness
+> - Performance **(20%)**: results and analysis
+> - Report **(30%)**: organization, analysis, discussion
 
 ### Week 13 RAG Systems
 
