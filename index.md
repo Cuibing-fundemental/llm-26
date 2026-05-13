@@ -233,9 +233,7 @@ Use of AI coding assistants **is permitted**. However, you should explicitly att
 > - Performance **(20%)**: results and analysis
 > - Report **(30%)**: organization, analysis, discussion
 
-### Week 13 RAG Systems
-
-Dense Retrieval, Vector DBs, Reranking, Grounding
+### Week 13 Diffusion Language Models
 
 ### Week 14 Alignment & Safety
 
