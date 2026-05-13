@@ -44,17 +44,17 @@
 }
 
 /* PPT SLIDE HEADER */
-.ppt{ padding: 6px 6px; }
+.ppt{ padding: 0 6px; }
 .ppt-title{
   font-size: 64px;
   font-weight: 800;
   color: var(--fudan-blue);
-  margin: 0 0 6px 0;
+  margin: 0 0 2px 0;
 }
 .ppt-line{
   height: 6px;
   background: var(--fudan-blue);
-  margin: 0 0 18px 0;
+  margin: 0 0 14px 0;
 }
 
 /* SIMPLE TWO-COLUMN LAYOUT */
