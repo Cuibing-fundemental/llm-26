@@ -44,7 +44,7 @@
 }
 
 /* PPT SLIDE HEADER */
-.ppt{ padding: 0 6px; }
+.ppt{ padding: 0 12px; }
 .ppt-title{
   font-size: 64px;
   font-weight: 800;
