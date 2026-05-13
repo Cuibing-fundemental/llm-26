@@ -201,6 +201,13 @@ Use of AI coding assistants **is permitted**. However, you should explicitly att
 
 ### Week 10 Post-training (SFT, RM, and PPO)
 
+> In this lecture, we introduce post-training techniques including supervised fine-tuning (SFT), reward modeling (RM), and reinforcement learning from human feedback via PPO. We also cover alignment, instruction tuning, and test-time compute scaling.
+> - **Readings:**
+>   - <a href="papers/lecture-09-readings-0-JM_Book_Chapter_10.pdf" target="_blank" rel="noopener">JM Book Chapter 10: Post-training: Instruction Tuning, Alignment, and Test-Time Compute</a>
+>   - <a href="papers/lecture-09-readings-4-DeepSeekMath.pdf" target="_blank" rel="noopener">DeepSeekMath (2024)</a>
+>   - <a href="papers/lecture-09-readings-5-DeepSeekR1.pdf" target="_blank" rel="noopener">DeepSeek-R1 (2025)</a>
+> - **Excercise: <a href="https://github.com/baojian/llm-26/blob/main/lecture-08-sft-rm-ppo/lecture-08-sft-rm-ppo.ipynb" target="_blank" rel="noopener">lecture-08-sft-rm-ppo.ipynb</a>**
+
 ### Week 11 Information Retrieval and Retrieval-Augmented Generation
 
 ### Week 12 Course Project Presentation
