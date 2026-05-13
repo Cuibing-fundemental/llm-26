@@ -1,0 +1,22 @@
+The Transformer Architecture
+
+The transformer is a deep learning architecture introduced in the 2017 paper "Attention Is All You Need" by Vaswani et al. It was designed for sequence-to-sequence tasks like machine translation but has since become the foundation for nearly all modern large language models.
+
+Unlike recurrent neural networks (RNNs), transformers process all tokens in a sequence in parallel rather than sequentially. This parallelism makes training on modern hardware far faster and enables models to be trained on much larger datasets.
+
+The original transformer uses an encoder-decoder design. The encoder reads the input sequence and produces a set of contextualized representations. The decoder generates the output sequence one token at a time, attending to both the encoder output and previously generated tokens.
+
+Multi-Head Self-Attention is the central innovation. It allows each token to directly attend to every other token regardless of distance. Multiple attention heads run in parallel, each learning to attend to different aspects of the input.
+
+Each transformer layer also contains a position-wise feed-forward sub-layer: two linear transformations with a non-linear activation (ReLU or GELU) between them. This sub-layer is applied independently to each position.
+
+Residual connections and layer normalization wrap each sub-layer, stabilizing training and allowing very deep networks.
+
+Because transformers process tokens in parallel, they need positional encodings — either fixed sinusoidal patterns or learned embeddings — added to token embeddings to inject sequence-order information.
+
+Three common variants exist:
+- Encoder-only models (e.g., BERT): best for understanding and classifying text.
+- Decoder-only models (e.g., GPT): process text left-to-right and are pre-trained to predict the next token.
+- Encoder-decoder models (e.g., T5): use the full architecture for tasks that require both reading and generating text.
+
+The transformer's ability to model long-range dependencies and scale efficiently on modern hardware accelerators has driven the development of increasingly powerful language models, from BERT and GPT-2 to GPT-4 and beyond.

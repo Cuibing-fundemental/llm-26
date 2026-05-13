@@ -1,0 +1,17 @@
+LLM Pretraining
+
+Pretraining is the initial phase in which a language model learns general representations of language from a large unlabeled text corpus. The resulting pretrained model has broad linguistic knowledge that can be adapted to specific downstream tasks through fine-tuning.
+
+Modern LLMs like GPT-4, Claude, and LLaMA are predominantly decoder-only, autoregressive transformers pretrained with a causal language modeling objective: predict the next token given all previous tokens. This simple objective, applied at massive scale, produces models with remarkable emergent capabilities including reasoning, summarization, translation, and code generation.
+
+Pretraining data typically includes web-scraped text (e.g., Common Crawl), curated high-quality sources (books, Wikipedia, arXiv papers, GitHub code), and carefully filtered and deduplicated versions of these. Data quality and diversity are crucial: more high-quality data consistently improves performance.
+
+Scaling laws (Kaplan et al.; Hoffmann et al. "Chinchilla") establish empirical relationships between model size (parameters), dataset size (tokens), and compute budget. The Chinchilla scaling laws suggest optimal pretraining uses roughly 20 tokens per parameter — earlier large models were significantly undertrained.
+
+Tokenization converts raw text into sequences of sub-word tokens using algorithms such as Byte-Pair Encoding (BPE) or SentencePiece. Vocabulary sizes are typically 32,000 to 100,000 tokens. Good tokenization affects both compression efficiency and downstream task performance.
+
+Optimization uses AdamW with a learning rate schedule (linear warmup followed by cosine decay), gradient clipping, and weight decay. Batch sizes of millions of tokens are common.
+
+Distributed training is essential for frontier models, requiring thousands of GPUs. Key techniques include data parallelism, tensor parallelism, pipeline parallelism, and mixed-precision (bfloat16) training.
+
+After pretraining, models are aligned with human preferences through supervised fine-tuning (SFT) and reinforcement learning from human feedback (RLHF), producing instruction-following assistant models.

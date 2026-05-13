@@ -1,0 +1,22 @@
+Retrieval-Augmented Generation
+
+Retrieval-Augmented Generation (RAG) is a technique that enhances large language models by pairing them with a retrieval component. Instead of relying solely on knowledge encoded in model parameters, RAG retrieves relevant documents from an external corpus at inference time and conditions the generation on that retrieved content.
+
+RAG was introduced in the 2020 paper "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" by Lewis et al. at Facebook AI Research. The method showed that combining parametric memory (model weights) with non-parametric memory (retrieved documents) significantly improves performance on knowledge-intensive tasks such as open-domain question answering and fact verification.
+
+The standard RAG pipeline has two stages:
+
+Indexing (offline): The document corpus is split into chunks. Each chunk is converted to a dense vector (embedding) using an encoder model. All vectors are stored in a vector database. This step happens once, or periodically when documents are updated.
+
+Retrieval and Generation (online): Given a user query, the query is embedded with the same encoder. The vector database is searched for the top-k most similar chunk vectors. The retrieved chunks are concatenated with the original query to form an augmented prompt. This prompt is passed to the language model, which generates the final grounded answer.
+
+RAG offers several advantages over fine-tuning:
+- The knowledge base can be updated without retraining the model.
+- Answers can be traced to specific source documents, improving transparency.
+- RAG generalizes well to domains not seen during pre-training.
+
+Common components include a dense retriever (e.g., DPR or a sentence transformer), a vector store (e.g., FAISS, ChromaDB, Weaviate, or Qdrant), and a generator (any capable LLM).
+
+Advanced RAG variants include re-ranking retrieved passages with a cross-encoder, query rewriting, multi-hop retrieval for complex questions, and Self-RAG where the model learns when retrieval is needed.
+
+RAG is now widely deployed in enterprise question-answering systems, customer support chatbots, code assistants, and research tools.

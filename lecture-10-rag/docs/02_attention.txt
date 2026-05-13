@@ -1,0 +1,23 @@
+The Attention Mechanism
+
+The attention mechanism allows models to dynamically focus on relevant parts of the input when producing each part of the output. It was introduced for neural machine translation to address the bottleneck of compressing an entire source sentence into a single fixed-size vector.
+
+The core formula is:
+
+    Attention(Q, K, V) = softmax(Q K^T / sqrt(d_k)) V
+
+Q (queries), K (keys), and V (values) are obtained from the input via learned linear projections. The scaling factor 1/sqrt(d_k) prevents dot products from becoming too large when the key dimension d_k is high, which would push the softmax into regions with near-zero gradients.
+
+Self-attention (intra-attention) is used in transformers: the queries, keys, and values all come from the same input sequence. This lets each token build a representation that incorporates information from all other tokens.
+
+Multi-head attention runs h independent attention operations in parallel. Each head uses different projections for Q, K, and V, allowing the model to jointly attend to information from different representation subspaces. The h outputs are concatenated and linearly projected.
+
+Cross-attention is used in encoder-decoder models: the decoder's queries attend over the encoder's keys and values. This is how the decoder "reads" the source representation.
+
+Masked (causal) attention is used in decoder-only models during training. A mask prevents each position from attending to future positions, enforcing the autoregressive left-to-right generation order.
+
+Flash Attention is an efficient GPU implementation that recomputes attention on-the-fly in tiled chunks, dramatically reducing memory usage and enabling longer context windows.
+
+Sparse attention methods (e.g., Longformer, BigBird) attend to only a subset of tokens based on fixed or learned patterns, reducing the O(n^2) cost for very long sequences.
+
+The attention mechanism has proved broadly useful beyond NLP, appearing in Vision Transformers (ViT), protein structure prediction (AlphaFold), and reinforcement learning agents.

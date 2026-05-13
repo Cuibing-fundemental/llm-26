@@ -1,0 +1,15 @@
+[project]
+name = "lecture-10-rag"
+version = "0.1.0"
+description = "RAG demo for CS40008.01 Lecture 10"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=0.5.0",
+    "ollama>=0.3.0",
+    "numpy>=1.26.0",
+    "tqdm>=4.66.0",
+    "jupyter>=1.1.0",
+    "jupyterlab>=4.4.0",
+    "ipykernel>=6.29.0",
+    "ipywidgets>=8.1.0",
+]

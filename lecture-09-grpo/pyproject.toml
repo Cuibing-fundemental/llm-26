@@ -1,0 +1,28 @@
+[project]
+name = "lecture-09-grpo"
+version = "0.1.0"
+description = "GRPO lecture: Group Relative Policy Optimization for LLM reasoning"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.6.0",
+    "transformers>=4.47.0",
+    "datasets>=3.5.0",
+    "accelerate>=1.0.0",
+    "wandb>=0.19.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "jupyterlab>=4.3.0",
+    "ipywidgets>=8.1.0",
+    "safetensors>=0.5.3",
+    "tqdm>=4.67.0",
+    "matplotlib>=3.9.0",
+    "huggingface-hub>=0.26.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

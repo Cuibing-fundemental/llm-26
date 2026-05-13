@@ -1,0 +1,21 @@
+Fine-Tuning and RLHF
+
+Fine-tuning further trains a pretrained language model on a smaller, task-specific dataset to adapt it to a particular task or domain. Starting from a pretrained checkpoint rather than random initialization makes fine-tuning far more data-efficient.
+
+Supervised Fine-Tuning (SFT) is the most straightforward form. The model is trained on a curated dataset of (prompt, response) pairs using the same causal language modeling loss as pretraining. SFT teaches the model to follow instructions and produce responses in the desired format and style.
+
+Parameter-Efficient Fine-Tuning (PEFT) updates only a small subset of parameters, dramatically reducing compute and memory requirements:
+- LoRA (Low-Rank Adaptation): adds trainable rank-decomposition matrices alongside the frozen original weight matrices. Only these small matrices are updated during training.
+- Prefix tuning: prepends a small set of learnable continuous vectors to the input, with the original model weights frozen.
+- Adapter layers: inserts small trainable bottleneck modules between transformer layers.
+
+Reinforcement Learning from Human Feedback (RLHF) is a three-step alignment technique:
+1. SFT: Train a base model on human-written demonstrations.
+2. Reward modeling: Train a reward model on pairs of model outputs ranked by human annotators.
+3. RL optimization: Use PPO (Proximal Policy Optimization) to optimize the SFT model to maximize the reward, penalized by a KL divergence term that keeps the model close to its SFT starting point.
+
+RLHF was central to training InstructGPT and the GPT-4 and Claude model families. It substantially improves helpfulness, harmlessness, and the ability to follow nuanced instructions.
+
+Direct Preference Optimization (DPO) eliminates the separate reward model and RL loop. DPO directly optimizes the language model using binary cross-entropy over preference pairs, which is simpler and more stable than PPO.
+
+Group Relative Policy Optimization (GRPO) is used for reasoning tasks. It uses rule-based rewards (format correctness, answer accuracy) and normalizes rewards within a group of sampled responses, avoiding the need for a learned reward model.
