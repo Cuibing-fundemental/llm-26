@@ -1,191 +1,296 @@
 # Group Relative Policy Optimization (GRPO)
 
-> **Source:** DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (Shao et al., 2024)
+> **Primary reference:** [GRPO-Zero](https://github.com/policy-gradient/GRPO-Zero) — a minimal from-scratch implementation (only `torch` + `tokenizers`, no HuggingFace Transformers, no vLLM).  
+> **Original paper:** DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (Shao et al., 2024)  
+> **Variant:** R1-Zero — pure RL from a pretrained model, **no SFT warm-up, no KL penalty, no reference model.**
 
 ---
 
-## 1. Why Not Just Use PPO?
+## 1. The Big Picture
 
-Proximal Policy Optimization (PPO) requires training **two models simultaneously**:
+Standard PPO fine-tunes an LLM with RL by training **two models simultaneously**:
 
-- **Actor** $\pi_\theta$ — the policy we are optimizing
-- **Critic** $V_\phi$ — a value network that estimates the expected return from each state
+- **Actor** $\pi_\theta$ — the policy being optimized  
+- **Critic** $V_\phi$ — a value network that estimates expected return, roughly the same size as the actor
 
-The critic adds substantial memory and compute cost, especially for large LLMs. It must match the size of the actor to be accurate, effectively doubling the training footprint.
+The critic doubles memory cost. **GRPO removes it entirely** by using the spread of rewards within a sampled group as the baseline.
 
-**GRPO removes the critic entirely.** Instead it estimates advantages by comparing outputs within a sampled group.
+The full training loop is three steps repeated indefinitely:
+
+```
+Loop:
+  1. ROLLOUT  — sample G responses per prompt, score each with a reward function
+  2. NORMALIZE — compute group-relative advantage for each response
+  3. UPDATE   — take one gradient step on the policy using the clipped PG objective
+```
 
 ---
 
-## 2. Setup: Group Sampling
+## 2. Step 1 — Rollout
 
-For each prompt $q$ drawn from the training distribution $P(Q)$, GRPO samples a **group** of $G$ independent outputs from the current (old) policy:
+### What it does
 
-$$\{o_1, o_2, \ldots, o_G\} \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)$$
+For each prompt $q$, generate $G$ independent responses using the current policy $\pi_\theta$:
 
-Each output $o_i$ is a complete response (a sequence of tokens). A reward function $\mathcal{R}$ then scores each one:
+$$\{o_1, o_2, \ldots, o_G\} \sim \pi_\theta(\cdot \mid q)$$
+
+Then score each response with a reward function $\mathcal{R}$:
 
 $$r_i = \mathcal{R}(q, o_i), \quad i = 1, \ldots, G$$
 
-So we get a group of reward signals $\mathbf{r} = (r_1, r_2, \ldots, r_G)$ — all from the **same prompt**, all from the **same old policy**. This is the key observation that makes GRPO work.
+### The code (from `grpo.py`)
+
+```python
+@torch.no_grad()
+def rollout(model, batch, tokenizer, max_gen_len,
+            num_answer_per_question, reward_function, device, dtype):
+```
+
+Key implementation details:
+
+**KV-cache for efficiency.** Generation is token-by-token. GRPO-Zero pre-allocates a KV cache for all $G$ sequences at once so each forward pass only processes one new token (not the full sequence):
+
+```python
+model.init_kv_cache(max_batch_size=bsz, max_seq_len=total_len, ...)
+
+for cur_pos in range(min_prompt_len, total_len):
+    logits = model.inference(tokens[:, prev_pos:cur_pos], prev_pos)
+    probs  = torch.softmax(logits[:, -1], dim=-1)
+    next_token = torch.multinomial(probs, num_samples=1)
+    ...
+```
+
+**Early stopping.** Once all sequences have emitted an `<eos>` token, generation stops:
+
+```python
+is_finished = is_finished | (is_end_token & is_generated_token)
+if is_finished.all():
+    break
+```
+
+**Reward assignment.** After generation, each completed response is scored:
+
+```python
+rewards = reward_function(response=generated_text, numbers=..., target=...)
+episode = Episode(..., reward=rewards["reward"], ...)
+```
+
+Each `Episode` stores the prompt, generated tokens, whether the sequence finished, and the reward — everything needed for the policy update.
 
 ---
 
-## 3. Group-Relative Advantage
+## 3. Step 2 — Group-Relative Advantage
 
-In PPO, the advantage $\hat{A}_t$ at token $t$ is estimated by the critic:
+### The math
 
-$$\hat{A}_t^{\text{PPO}} = r_t + \gamma V(s_{t+1}) - V(s_t)$$
+This is the core idea of GRPO. Within each group of $G$ responses to the same prompt, compute the **mean** and **standard deviation** of rewards, then normalize:
 
-GRPO has no critic. Instead it uses the **group mean and standard deviation** of rewards as the baseline:
+$$\boxed{\hat{A}_i = \frac{r_i - \mu_{\mathbf{r}}}{\sigma_{\mathbf{r}} + \varepsilon}}$$
 
-$$\boxed{\hat{A}_i = \frac{r_i - \mu_{\mathbf{r}}}{\sigma_{\mathbf{r}}}}$$
-
-where
-
-$$\mu_{\mathbf{r}} = \frac{1}{G}\sum_{i=1}^G r_i, \qquad \sigma_{\mathbf{r}} = \sqrt{\frac{1}{G}\sum_{i=1}^G (r_i - \mu_{\mathbf{r}})^2}$$
+where $\mu_{\mathbf{r}} = \frac{1}{G}\sum_{i=1}^G r_i$ and $\sigma_{\mathbf{r}} = \sqrt{\frac{1}{G}\sum_{i=1}^G (r_i - \mu_{\mathbf{r}})^2}$.
 
 **Intuition:**
-- If output $o_i$ got a reward **above** the group average → $\hat{A}_i > 0$ → encourage this output
-- If output $o_i$ got a reward **below** the group average → $\hat{A}_i < 0$ → suppress this output
-- The std normalization keeps the advantage signal on a consistent scale regardless of the reward magnitude
+- $\hat{A}_i > 0$ → this response was better than average → increase its probability  
+- $\hat{A}_i < 0$ → this response was worse than average → decrease its probability  
+- The normalization keeps gradients on a consistent scale regardless of reward magnitude
 
-Note: $\hat{A}_i$ is a **scalar per output** — it is broadcast to every token $t$ in $o_i$, so $\hat{A}_{i,t} = \hat{A}_i$ for all $t$.
+This replaces the critic: instead of $\hat{A}_t = r_t + \gamma V(s_{t+1}) - V(s_t)$, we use the group as a self-referential baseline.
 
----
+### The code
 
-## 4. Importance Ratio
+```python
+def normalize_rewards_per_group(episodes: List[Episode]) -> List[Episode]:
+    groups = defaultdict(list)
+    for episode in episodes:
+        groups[tuple(episode.prefix)].append(episode)   # group by prompt
 
-Because GRPO is an **off-policy** update (outputs were sampled from $\pi_{\theta_{\text{old}}}$ but we are updating $\pi_\theta$), we correct for the distribution shift with an importance ratio at each token $t$:
-
-$$\boxed{\rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q,\, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q,\, o_{i,<t})}}$$
-
-- When $\pi_\theta \approx \pi_{\theta_{\text{old}}}$, the ratio $\rho \approx 1$ and there is no correction
-- When $\pi_\theta$ has moved far from $\pi_{\theta_{\text{old}}}$, the ratio can be large or small, which is dangerous
-
----
-
-## 5. Clipped Surrogate Objective
-
-To prevent large policy updates, GRPO inherits PPO's **clipping** trick. The per-token surrogate loss is:
-
-$$\boxed{L_{\text{clip}}(i, t, \theta) = \min\!\Big(\rho_{i,t}\,\hat{A}_i,\quad \text{clip}(\rho_{i,t},\; 1-\varepsilon,\; 1+\varepsilon)\,\hat{A}_i\Big)}$$
-
-where $\varepsilon$ is a small hyperparameter (typically $0.1$ or $0.2$).
-
-**Why does clipping work?**
-
-Consider the two cases:
-
-**Case 1 — $\hat{A}_i > 0$ (good output, want to increase probability):**
-
-$$\min(\rho_{i,t}\,\hat{A}_i,\; (1+\varepsilon)\,\hat{A}_i)$$
-
-If $\rho_{i,t} > 1+\varepsilon$ (policy has already increased this token's probability too much), the clip kicks in and stops further increase. The gradient becomes zero.
-
-**Case 2 — $\hat{A}_i < 0$ (bad output, want to decrease probability):**
-
-$$\min(\rho_{i,t}\,\hat{A}_i,\; (1-\varepsilon)\,\hat{A}_i)$$
-
-If $\rho_{i,t} < 1-\varepsilon$ (policy has already decreased this token's probability too much), the clip stops further decrease.
-
-In both cases, the objective is **pessimistic** — it takes the lower bound, acting as a conservative constraint on how much the policy can change in one step.
-
----
-
-## 6. KL Divergence Penalty
-
-To further prevent the updated policy $\pi_\theta$ from drifting too far from the **reference policy** $\pi_{\text{ref}}$ (usually the SFT model), GRPO adds a KL penalty. The KL divergence is:
-
-$$D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}] = \mathbb{E}\left[\log \frac{\pi_\theta(o)}{\pi_{\text{ref}}(o)}\right]$$
-
-In practice this is estimated per token using the following **unbiased estimator** (Schulman, 2020):
-
-$$\boxed{D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]_{i,t} \approx \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - \log\frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - 1}$$
-
-This estimator is always $\geq 0$ and equals $0$ only when $\pi_\theta = \pi_{\text{ref}}$.
-
-The KL term is weighted by $\beta > 0$, a hyperparameter controlling how tightly the policy is anchored to the reference model.
-
----
-
-## 7. The Full GRPO Objective
-
-Putting it all together, the GRPO objective to **maximize** is:
-
-$$\boxed{J_{\text{GRPO}}(\theta) = \mathbb{E}_{\substack{q \sim P(Q) \\ \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)}} \left[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \left( L_{\text{clip}}(i,t,\theta) - \beta\, D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]_{i,t} \right) \right]}$$
-
-Breaking it down:
-
-| Term | Meaning |
-|---|---|
-| $\frac{1}{G}\sum_{i=1}^G$ | average over the group of $G$ sampled outputs |
-| $\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}$ | average over all tokens in output $o_i$ |
-| $L_{\text{clip}}(i,t,\theta)$ | clipped policy gradient term (maximize) |
-| $\beta\, D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]_{i,t}$ | KL penalty anchoring to reference model (minimize) |
-
----
-
-## 8. The GRPO Algorithm
-
-```
-Algorithm: GRPO
-
-Input:  initial policy π_θ (= SFT model), reference policy π_ref,
-        reward function R, group size G, iterations T
-
-for iteration = 1 to T:
-    1. Sample a batch of prompts {q} from P(Q)
-    
-    2. For each prompt q:
-       - Sample G outputs {o_1, ..., o_G} from π_θ_old(· | q)
-       - Compute rewards r_i = R(q, o_i) for i = 1..G
-       - Compute group-relative advantages:
-             Â_i = (r_i - mean(r)) / std(r)
-    
-    3. Update θ by maximizing J_GRPO(θ):
-       - Compute ρ_{i,t} = π_θ(o_{i,t}|q,o_{i,<t}) / π_θ_old(o_{i,t}|q,o_{i,<t})
-       - Compute clipped surrogate L_clip
-       - Compute KL penalty w.r.t. π_ref
-       - Gradient step on J_GRPO
-
-    4. Update θ_old ← θ
-
-Output: optimized policy π_θ
+    output = []
+    for group in groups.values():
+        group_rewards = [item.reward for item in group]
+        mean_reward = np.mean(group_rewards)
+        std_reward  = np.std(group_rewards)
+        for episode in group:
+            normalized = (episode.reward - mean_reward) / (std_reward + 1e-4)
+            episode = dataclasses.replace(episode, reward=normalized)
+            output.append(episode)
+    return output
 ```
 
+After this function, each `episode.reward` field holds $\hat{A}_i$ — the group-relative advantage, not the raw reward.
+
+Note: $\hat{A}_i$ is a **scalar per response**. Every token in response $o_i$ gets the same advantage value. There is no token-level credit assignment within a single response (unlike PPO with a good critic).
+
 ---
 
-## 9. GRPO vs PPO: Key Differences
+## 4. Step 3 — Policy Update
 
-| | PPO | GRPO |
+### The objective
+
+GRPO maximizes (R1-Zero variant — **no KL term**):
+
+$$\boxed{J(\theta) = \frac{1}{N_{\text{tokens}}} \sum_{i=1}^{G} \sum_{t=1}^{|o_i|} \log \pi_\theta(o_{i,t} \mid q, o_{i,<t}) \cdot \hat{A}_i}$$
+
+Compared to the full GRPO paper, R1-Zero **drops the KL divergence penalty** and **drops the clipping**. The update is a straightforward policy gradient weighted by the group-relative advantage.
+
+> **Why no clipping here?** GRPO-Zero does only **one gradient update per rollout batch** (not multiple epochs over the same data like PPO). With a single update, the policy doesn't move far, so clipping is less critical.
+
+### Token log-probability via cross-entropy
+
+Computing $\log \pi_\theta(o_{i,t} \mid q, o_{i,<t})$ is equivalent to the **negative cross-entropy loss** at each token position. GRPO-Zero uses exactly this:
+
+```python
+log_probs = -torch.nn.functional.cross_entropy(
+    logits.reshape(-1, logits.size(-1)),   # [B*T, vocab]
+    target_token_ids.reshape(-1),           # [B*T]
+    ignore_index=pad_token_id,
+    reduction="none",
+).reshape(B, T)                             # [B, T]  — one log-prob per token
+```
+
+### The policy gradient
+
+The objective is then:
+
+```python
+obj  = log_probs * batch_advantages[:, None]   # broadcast advantage over tokens
+obj  = (obj * target_masks).sum() / num_target_tokens  # mean over generated tokens
+loss = -obj                                    # gradient ascent → minimize negative
+loss.backward()
+```
+
+`target_masks` is 1 for generated tokens and 0 for prompt tokens — we only train on what the model produced, not on the input prompt.
+
+`num_target_tokens` normalizes over the **total number of generated tokens** in the batch (token-level, not sequence-level), so longer responses don't dominate.
+
+### The full `update_policy` function
+
+```python
+def update_policy(model, optimizer, episodes, micro_batch_size,
+                  pad_token_id, max_grad_norm, device, dtype):
+
+    episodes = normalize_rewards_per_group(episodes)       # Step 2
+    episodes.sort(key=lambda x: len(x.prefix_token_ids)
+                               + len(x.generated_token_ids))  # sort for efficient batching
+
+    num_target_tokens = sum(len(e.generated_token_ids) for e in episodes)
+
+    for i in range(0, len(episodes), micro_batch_size):    # gradient accumulation
+        batch_episodes = episodes[i : i + micro_batch_size]
+
+        # --- build tensors ---
+        batch_token_ids  = [prefix + generated + padding]  # [B, T]
+        batch_masks      = [0*len(prefix) + 1*len(gen) + 0*padding]
+        batch_advantages = [episode.reward for episode in batch_episodes]
+
+        # --- forward pass ---
+        logits = model.forward(input_token_ids)             # [B, T, vocab]
+
+        # --- log-probs ---
+        log_probs = -cross_entropy(logits, targets, reduction="none")
+
+        # --- weighted objective ---
+        obj  = (log_probs * advantages[:, None] * masks).sum() / num_target_tokens
+        loss = -obj
+        loss.backward()
+
+    # --- one optimizer step for the whole batch ---
+    clip_grad_norm_(model.parameters(), max_grad_norm)
+    optimizer.step()
+    optimizer.zero_grad()
+```
+
+---
+
+## 5. Reward Function (CountDown Task)
+
+GRPO-Zero uses the **CountDown** task: given numbers like `[1, 2, 3, 4]` and a target `11`, the model must produce an arithmetic expression like `1 + (2 * 3) + 4`.
+
+The reward is the sum of two components:
+
+| Component | Reward | Condition |
 |---|---|---|
-| Advantage estimation | Critic network $V_\phi$ | Group mean/std normalization |
-| Extra model required | Yes (critic, same size as actor) | No |
-| Memory cost | ~2× actor size | ~1× actor size |
-| Baseline | State value $V(s_t)$ | Group mean reward $\mu_\mathbf{r}$ |
-| Token-level signal | Yes (via GAE) | Uniform within output (same $\hat{A}_i$ for all tokens) |
-| Clipping | ✅ | ✅ |
-| KL penalty | Optional | Standard |
+| Format reward | 0.0 – 1.0 | Does the output contain `<think>...</think><answer>...</answer>`? |
+| Answer reward | 1.0 | Does the expression use each number exactly once **and** evaluate to the target? |
+| Combined | `0.1 × format + answer` | |
 
-The main **limitation** of GRPO is that every token in the same output gets the same advantage signal $\hat{A}_i$ — there is no credit assignment at the token level within a single response. PPO with a good critic can assign different advantages to different tokens, giving a finer-grained learning signal.
+```python
+def format_reward_function(response, end_token=None):
+    # Full correct format → 1.0
+    # Has <think> tag → +0.1
+    # Has <answer> tag → +0.5
+    ...
+
+def answer_reward_function(response, numbers, target):
+    # Extract expression from <answer>...</answer>
+    # Check all numbers used exactly once
+    # Check eval(expression) ≈ target → 1.0
+    ...
+```
+
+**Why this reward works well for GRPO:**  
+The reward is binary and verifiable — no learned reward model needed. Within each group of $G$ responses, some will get `answer_reward=1` and some `answer_reward=0`, creating a clear spread that makes the group-relative advantage informative.
 
 ---
 
-## 10. Why It Works for Math / Reasoning
+## 6. The Training Loop
 
-GRPO is especially effective when the reward signal is **binary or sparse** (e.g., correct/incorrect on a math problem):
+```python
+# train.py (simplified)
+for step, batch in enumerate(train_dataloader):
 
-- With $G$ samples per prompt, even if most outputs are wrong, a correct one will have $r_i \gg \mu_\mathbf{r}$ and get a large positive advantage
-- The model is pushed toward the reasoning pattern that produced the correct answer
-- No credit assignment problem within the chain-of-thought — getting the right final answer reinforces the entire reasoning trace
+    # Step 1: Generate G responses per prompt, score each
+    episodes = rollout(model, batch,
+                       num_answer_per_question=NUM_ANSWERS_PER_QUESTION, ...)
 
-This matches perfectly with the **outcome reward model** (ORM) used in DeepSeekMath: reward 1 if the final answer is correct, 0 otherwise.
+    # Step 2 + 3: Normalize advantages and update policy
+    results = update_policy(model, optimizer, episodes, ...)
+```
+
+With `batch_size=256` and `num_questions_per_batch=32`, each step:
+- Takes 32 prompts
+- Generates 256/32 = **8 responses per prompt**
+- Scores all 256 responses
+- Normalizes within each group of 8
+- Takes one gradient step
+
+---
+
+## 7. GRPO vs PPO — Key Differences
+
+| | PPO | GRPO (R1-Zero) |
+|---|---|---|
+| Baseline | Critic network $V_\phi$ | Group mean reward $\mu_{\mathbf{r}}$ |
+| Extra model | Critic (~same size as actor) | None |
+| KL penalty | Optional | **Removed** (R1-Zero) |
+| Clipping | ✅ | **Removed** (1 update/rollout) |
+| Token-level advantage | Yes (via GAE) | No (same $\hat{A}_i$ for all tokens in $o_i$) |
+| Dependencies | HuggingFace, DeepSpeed, … | Just `torch` + `tokenizers` |
+
+---
+
+## 8. Running GRPO-Zero
+
+```bash
+# Install
+pip install uv
+uv sync
+
+# Download data and model
+git clone https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4
+git clone https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
+
+# Train (48GB GPU)
+uv run train.py
+
+# Train (24GB GPU — offloads optimizer states to CPU)
+uv run train.py --config config_24GB.yaml
+```
 
 ---
 
 ## References
 
 1. Shao et al. *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models.* 2024. [`arXiv:2402.03300`](https://arxiv.org/abs/2402.03300)
-2. Schulman et al. *Proximal Policy Optimization Algorithms.* 2017. [`arXiv:1707.06347`](https://arxiv.org/abs/1707.06347)
-3. DeepSeek-AI. *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning.* 2025. [`arXiv:2501.12948`](https://arxiv.org/abs/2501.12948)
+2. DeepSeek-AI. *DeepSeek-R1.* 2025. [`arXiv:2501.12948`](https://arxiv.org/abs/2501.12948)
+3. Yu et al. *DAPO: An Open-Source LLM Reinforcement Learning System at Scale.* 2025. [`arXiv:2503.14476`](https://arxiv.org/abs/2503.14476)
+4. GRPO-Zero implementation: [`github.com/policy-gradient/GRPO-Zero`](https://github.com/policy-gradient/GRPO-Zero)
