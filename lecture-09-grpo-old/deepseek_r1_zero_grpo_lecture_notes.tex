@@ -1,0 +1,719 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{array}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\KL}{\mathrm{D}_{\mathrm{KL}}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\old}{\mathrm{old}}
+\newcommand{\refm}{\mathrm{ref}}
+\newcommand{\fmt}{\mathrm{fmt}}
+\newcommand{\acc}{\mathrm{acc}}
+\newcommand{\RL}{\mathrm{RL}}
+\newcommand{\SFT}{\mathrm{SFT}}
+\newcommand{\CoT}{\mathrm{CoT}}
+\newcommand{\GRPO}{\mathrm{GRPO}}
+
+\title{Lecture Notes: DeepSeek-R1-Zero and Group Relative Policy Optimization}
+\author{NLP / LLMs Lecture Handout}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Lecture context}
+
+\paragraph{Target audience.}
+Senior undergraduate and graduate students who have seen language modeling and basic machine learning optimization. The lecture assumes familiarity with token probabilities, cross-entropy training, and basic gradients, but it reviews the reinforcement-learning notation needed for GRPO.
+
+\paragraph{Time budget.}
+A 90-minute lecture can be organized as follows:
+
+\begin{center}
+\begin{tabular}{@{}p{0.18\textwidth}p{0.70\textwidth}@{}}
+\toprule
+Time & Topic \\
+\midrule
+0--10 min & Motivation: why post-train LLMs for reasoning? \\
+10--20 min & DeepSeek-R1-Zero pipeline overview. \\
+20--35 min & From language-model policy gradients to PPO-style clipped updates. \\
+35--55 min & GRPO data flow and objective, step by step. \\
+55--65 min & Rule-based rewards: accuracy, code tests, and format. \\
+65--75 min & Full symbolic batch walkthrough. \\
+75--83 min & Comparison: PPO vs. GRPO. \\
+83--90 min & Short contrast with the full DeepSeek-R1 pipeline and takeaways. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Learning goals.}
+By the end, students should be able to:
+\begin{enumerate}[label=(\arabic*)]
+  \item describe the DeepSeek-R1-Zero post-training pipeline;
+  \item write the GRPO objective at the sequence and token levels;
+  \item explain how a batch of prompts becomes rewards, normalized advantages, and gradient updates;
+  \item explain why GRPO avoids a learned critic/value model;
+  \item contrast DeepSeek-R1-Zero with the fuller DeepSeek-R1 training pipeline.
+\end{enumerate}
+
+\section{High-level picture}
+
+DeepSeek-R1-Zero is a reasoning model obtained by applying large-scale reinforcement learning directly to a base LLM, without first doing supervised fine-tuning on human-written reasoning traces. The important conceptual point is that the training signal is not ``imitate this reasoning trace.'' Instead, it is closer to:
+\[
+\text{generate several candidate solutions} \quad \longrightarrow \quad
+\text{score them by rules} \quad \longrightarrow \quad
+\text{increase probability of the relatively successful ones.}
+\]
+
+The simplified R1-Zero pipeline is:
+\[
+\boxed{\text{DeepSeek-V3-Base}}
+\quad \xrightarrow{\text{RL with GRPO}}
+\quad
+\boxed{\text{DeepSeek-R1-Zero}}.
+\]
+
+The central training loop is:
+\[
+\begin{array}{c}
+\text{batch of prompts } q_j \\
+\downarrow \\
+\text{sample } G \text{ completions per prompt from } \pi_{\theta_{\old}} \\
+\downarrow \\
+\text{score each completion with rule-based rewards} \\
+\downarrow \\
+\text{normalize rewards within each prompt-group} \\
+\downarrow \\
+\text{update } \pi_\theta \text{ with GRPO objective.}
+\end{array}
+\]
+
+In the reported R1-Zero training details, each question used $G=16$ sampled outputs. A training step used 32 unique questions, so the corresponding group-expanded batch size was $32\times 16=512$ completions. The reported setup also used learning rate $3\times 10^{-6}$, KL coefficient $0.001$, rollout temperature $1$, and very long maximum generation lengths. See \cite{guo2025nature}.
+
+\section{Notation}
+
+Let
+\begin{itemize}[leftmargin=*]
+  \item $q \in \mathcal{Q}$ be a reasoning prompt, for example a math, coding, science, or logic problem;
+  \item $x=T(q)$ be the formatted model input after applying the training template;
+  \item $o=(y_1,\ldots,y_T)$ be a generated completion;
+  \item $\pi_\theta(o\mid x)$ be the LLM policy, i.e. the probability of completion $o$ given input $x$;
+  \item $\theta_{\old}$ be the frozen rollout policy used to sample the current batch;
+  \item $\pi_{\refm}$ be the reference policy used in the KL penalty;
+  \item $G$ be the group size, i.e. the number of completions sampled per prompt. For R1-Zero, use $G=16$ in lecture unless you are discussing variants.
+\end{itemize}
+
+Because an LLM is autoregressive,
+\begin{equation}
+\pi_\theta(o\mid x)
+= \prod_{t=1}^{T} \pi_\theta(y_t\mid x,y_{<t}),
+\qquad
+\log \pi_\theta(o\mid x)
+= \sum_{t=1}^{T} \log \pi_\theta(y_t\mid x,y_{<t}).
+\end{equation}
+
+For a mini-batch with $B$ unique prompts, write:
+\begin{equation}
+\mathcal{B}=\{q_j\}_{j=1}^{B},
+\qquad
+\mathcal{G}_j=\{o_{j,1},\ldots,o_{j,G}\}.
+\end{equation}
+
+For R1-Zero-style lecture notation, set $B=32$ and $G=16$ when discussing reported training scale, but keep the derivation general.
+
+\section{Training template}
+
+The model is prompted to produce a reasoning portion followed by a final answer. For mathematical notation, it is useful to split a completion into
+\[
+ o = (z,a),
+\]
+where $z$ denotes reasoning tokens and $a$ denotes the final answer tokens. In class, avoid spending time on long reasoning traces; use $z$ as a symbolic object.
+
+A simplified template is:
+\[
+T(q)=\texttt{User: }q\texttt{ Assistant: <think> } z \texttt{ </think> <answer> } a \texttt{ </answer>}.
+\]
+
+More carefully, $T(q)$ is the input prefix, and the model generates the tokens that should fill the reasoning and answer regions. The format reward checks whether the generated sequence respects this structural convention.
+
+\section{Step-by-step data flow}
+
+\subsection{Step 1: sample a batch of prompts}
+
+Sample prompts from the RL prompt distribution:
+\begin{equation}
+q_1,\ldots,q_B \sim \D_{\RL}.
+\end{equation}
+
+The dataset is not a set of target reasoning traces. It is a set of prompts for which we can usually compute a reward. For example:
+\begin{itemize}[leftmargin=*]
+  \item math prompts with known final answers;
+  \item coding prompts with unit tests;
+  \item logic/science prompts with verifiable targets.
+\end{itemize}
+
+\subsection{Step 2: sample a group of completions for each prompt}
+
+For each prompt $q_j$, construct $x_j=T(q_j)$ and sample $G$ outputs from the old policy:
+\begin{equation}
+ o_{j,i} \sim \pi_{\theta_{\old}}(\cdot\mid x_j),
+ \qquad i=1,\ldots,G.
+\end{equation}
+
+Equivalently, at the token level:
+\begin{equation}
+ o_{j,i}=(y_{j,i,1},\ldots,y_{j,i,T_{j,i}}),
+\end{equation}
+where
+\begin{equation}
+ y_{j,i,t}\sim \pi_{\theta_{\old}}(\cdot\mid x_j,y_{j,i,<t}).
+\end{equation}
+
+The key GRPO idea is that the $G$ completions for the same prompt form a comparison group. For R1-Zero, use
+\begin{equation}
+G=16.
+\end{equation}
+So one prompt generates 16 candidate solutions.
+
+\subsection{Step 3: compute rule-based rewards}
+
+Each completion receives a scalar reward:
+\begin{equation}
+r_{j,i}=R(q_j,o_{j,i}).
+\end{equation}
+
+For lecture purposes, decompose it as:
+\begin{equation}
+R(q,o)=w_{\acc}R_{\acc}(q,o)+w_{\fmt}R_{\fmt}(o),
+\label{eq:reward_decomp}
+\end{equation}
+where $w_{\acc},w_{\fmt}\ge 0$ are teaching notation for reward weights. The exact implementation details and weights need not be the same across reproductions.
+
+\paragraph{Accuracy reward for math.}
+Let $a^*(q)$ be the ground-truth answer and $\operatorname{extract}(o)$ be a parser that extracts the final answer from the completion. A simple binary accuracy reward is
+\begin{equation}
+R_{\acc}^{\mathrm{math}}(q,o)
+=\ind\{\operatorname{extract}(o)=a^*(q)\}.
+\end{equation}
+One can also use partial or symbolic equivalence checking:
+\begin{equation}
+R_{\acc}^{\mathrm{math}}(q,o)
+=\ind\{\operatorname{normalize}(\operatorname{extract}(o))
+=\operatorname{normalize}(a^*(q))\}.
+\end{equation}
+
+\paragraph{Accuracy reward for code.}
+For a coding task with tests $\mathcal{T}(q)=\{\tau_1,\ldots,\tau_K\}$, define
+\begin{equation}
+R_{\acc}^{\mathrm{code}}(q,o)
+=\frac{1}{K}\sum_{k=1}^{K}\ind\{\operatorname{run}(o,\tau_k)=\operatorname{pass}\}.
+\end{equation}
+The all-or-nothing version is
+\begin{equation}
+R_{\acc}^{\mathrm{code}}(q,o)
+=\prod_{k=1}^{K}\ind\{\operatorname{run}(o,\tau_k)=\operatorname{pass}\}.
+\end{equation}
+
+\paragraph{Format reward.}
+A simple format reward is
+\begin{equation}
+R_{\fmt}(o)
+=\ind\{o \text{ contains well-formed reasoning and answer tags}\}.
+\end{equation}
+For example, one could check whether the output has the schematic form
+\[
+\texttt{<think>}\;z\;\texttt{</think><answer>}\;a\;\texttt{</answer>}.
+\]
+
+The R1-Zero paper emphasizes rule-based rewards, mainly accuracy rewards and format rewards, and does not use a neural outcome or process reward model for R1-Zero. The paper states that neural reward models can introduce reward-hacking concerns and extra training complexity; see \cite{guo2025r1}.
+
+\subsection{Step 4: compute group-relative advantages}
+
+For each prompt $q_j$, we have $G$ rewards:
+\begin{equation}
+ r_{j,1},r_{j,2},\ldots,r_{j,G}.
+\end{equation}
+Compute the group mean:
+\begin{equation}
+\mu_j = \frac{1}{G}\sum_{i=1}^{G} r_{j,i},
+\end{equation}
+and group standard deviation:
+\begin{equation}
+\sigma_j
+=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(r_{j,i}-\mu_j)^2 + \delta},
+\end{equation}
+where $\delta>0$ is a small numerical constant used in implementations to avoid division by zero.
+
+Then define the group-relative advantage:
+\begin{equation}
+A_{j,i}
+=\frac{r_{j,i}-\mu_j}{\sigma_j}.
+\label{eq:advantage}
+\end{equation}
+
+This says:
+\begin{itemize}[leftmargin=*]
+  \item completions that are better than the group average have $A_{j,i}>0$;
+  \item completions that are worse than the group average have $A_{j,i}<0$;
+  \item completions near the group average have $A_{j,i}\approx 0$.
+\end{itemize}
+
+A useful classroom identity is:
+\begin{equation}
+\frac{1}{G}\sum_{i=1}^{G}A_{j,i}=0.
+\end{equation}
+So, for each prompt, GRPO turns absolute reward into within-prompt relative reward.
+
+\paragraph{Why normalize within prompt?}
+Prompt difficulty varies. One prompt may be easy, so many completions are correct; another may be hard, so most are wrong. The group baseline compares candidates for the same prompt, rather than comparing raw scores across unrelated prompts.
+
+\paragraph{Important edge case.}
+If all $G$ completions receive the same reward, then $\sigma_j\approx 0$ and there is essentially no relative learning signal for that prompt. For example, if all 16 completions are wrong and all receive zero reward, then GRPO cannot tell which completion was better.
+
+\section{From policy gradient to GRPO}
+
+\subsection{Plain policy-gradient objective}
+
+The ideal RL objective for a language-model policy is
+\begin{equation}
+J(\theta)=\E_{q\sim \D_{\RL},\;o\sim \pi_\theta(\cdot\mid T(q))}
+\left[R(q,o)\right].
+\end{equation}
+
+Using the score-function identity,
+\begin{align}
+\nabla_\theta J(\theta)
+&=\E_{q,o}\left[R(q,o)\nabla_\theta\log \pi_\theta(o\mid T(q))\right] \\
+&=\E_{q,o}\left[R(q,o)\sum_{t=1}^{T}\nabla_\theta\log \pi_\theta(y_t\mid T(q),y_{<t})\right].
+\end{align}
+
+A baseline $b(q)$ can be subtracted without changing the expected gradient, as long as it does not depend on the sampled action/completion:
+\begin{equation}
+\nabla_\theta J(\theta)
+=\E_{q,o}\left[(R(q,o)-b(q))\nabla_\theta\log\pi_\theta(o\mid T(q))\right].
+\end{equation}
+
+Traditional actor-critic methods learn a value function to supply this baseline. GRPO avoids a learned value model and instead uses group rewards from multiple completions for the same prompt.
+
+\subsection{Why PPO-style ratios appear}
+
+The completions in the batch were sampled from $\pi_{\theta_{\old}}$, but we want to update $\pi_\theta$. Therefore we use an importance ratio. At the token level, define
+\begin{equation}
+\rho_{j,i,t}(\theta)
+=\frac{\pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t})}
+{\pi_{\theta_{\old}}(y_{j,i,t}\mid x_j,y_{j,i,<t})}.
+\label{eq:rho}
+\end{equation}
+
+A naive surrogate would increase
+\begin{equation}
+\rho_{j,i,t}(\theta)A_{j,i}.
+\end{equation}
+But if $\rho$ becomes too large or too small, the update can become unstable. PPO-style clipping replaces this with
+\begin{equation}
+\ell^{\mathrm{clip}}_{j,i,t}(\theta)
+=\min\left(
+\rho_{j,i,t}(\theta)A_{j,i},\;
+\clip(\rho_{j,i,t}(\theta),1-\varepsilon,1+\varepsilon)A_{j,i}
+\right),
+\label{eq:clip_loss}
+\end{equation}
+where $\varepsilon>0$ is the clipping hyperparameter.
+
+\paragraph{Interpretation of clipping.}
+If $A_{j,i}>0$, the model wants to increase the probability of the tokens in completion $o_{j,i}$, but the clipped term limits how much probability can increase in one update. If $A_{j,i}<0$, the model wants to decrease the probability of those tokens, but the clipped term limits how much probability can decrease.
+
+\section{KL regularization}
+
+LLM post-training often adds a KL penalty so the policy does not move too far from a reference policy. In GRPO, this penalty is placed directly in the objective rather than being folded into the reward.
+
+For a sampled token $y_{j,i,t}$, define
+\begin{equation}
+\kappa_{j,i,t}(\theta)
+=\frac{\pi_{\refm}(y_{j,i,t}\mid x_j,y_{j,i,<t})}
+{\pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t})}.
+\end{equation}
+
+A common single-sample estimator for the KL contribution is
+\begin{equation}
+d^{\mathrm{KL}}_{j,i,t}(\theta)
+=\kappa_{j,i,t}(\theta)-\log \kappa_{j,i,t}(\theta)-1.
+\label{eq:kl_estimator}
+\end{equation}
+Since $u-\log u-1\ge 0$ for $u>0$, this term is nonnegative. Its expectation under $y\sim \pi_\theta$ estimates
+\begin{equation}
+\KL(\pi_\theta(\cdot\mid x_j,y_{<t})\|\pi_{\refm}(\cdot\mid x_j,y_{<t})).
+\end{equation}
+
+The reported R1-Zero training details used KL coefficient $\beta=0.001$ and replaced the reference model with the latest policy every 400 steps \cite{guo2025nature}. In lecture, emphasize the distinction:
+\begin{itemize}[leftmargin=*]
+  \item $\pi_{\theta_{\old}}$: the policy that sampled the current batch; appears in the PPO-style ratio.
+  \item $\pi_{\refm}$: the policy used as a KL anchor; appears in the regularizer.
+\end{itemize}
+
+\section{GRPO objective}
+
+Putting the pieces together, the token-level GRPO maximization objective for one batch is
+\begin{equation}
+\widehat{J}_{\GRPO}(\theta)
+=\frac{1}{B}\sum_{j=1}^{B}
+\frac{1}{G}\sum_{i=1}^{G}
+\frac{1}{T_{j,i}}\sum_{t=1}^{T_{j,i}}
+\left[
+\ell^{\mathrm{clip}}_{j,i,t}(\theta)
+-\beta d^{\mathrm{KL}}_{j,i,t}(\theta)
+\right].
+\label{eq:grpo_empirical}
+\end{equation}
+
+Equivalently, in expectation form:
+\begin{align}
+J_{\GRPO}(\theta)
+=\E_{\substack{q\sim \D_{\RL}\\
+\{o_i\}_{i=1}^{G}\sim \pi_{\theta_{\old}}(\cdot\mid T(q))}}
+\left[
+\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
+\left(
+\ell^{\mathrm{clip}}_{i,t}(\theta)-\beta d^{\mathrm{KL}}_{i,t}(\theta)
+\right)
+\right].
+\end{align}
+
+In code, one often minimizes the loss
+\begin{equation}
+\mathcal{L}_{\GRPO}(\theta)=-\widehat{J}_{\GRPO}(\theta).
+\end{equation}
+
+\subsection{Gradient intuition}
+
+Ignore clipping and KL for a moment, and suppose $\theta=\theta_{\old}$ at the start of the update. Then $\rho_{j,i,t}(\theta)=1$, and
+\begin{align}
+\nabla_\theta \left[\rho_{j,i,t}(\theta)A_{j,i}\right]
+&= A_{j,i}\nabla_\theta \rho_{j,i,t}(\theta) \\
+&= A_{j,i}\rho_{j,i,t}(\theta)
+\nabla_\theta \log \pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t}) \\
+&= A_{j,i}
+\nabla_\theta \log \pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t}).
+\end{align}
+
+Thus:
+\begin{itemize}[leftmargin=*]
+  \item if $A_{j,i}>0$, gradient ascent increases the probability of all tokens in completion $o_{j,i}$;
+  \item if $A_{j,i}<0$, gradient ascent decreases the probability of all tokens in completion $o_{j,i}$;
+  \item if $A_{j,i}\approx 0$, the completion contributes little policy-gradient signal.
+\end{itemize}
+
+This is why the method is easy to explain: GRPO rewards outputs that are better than sibling outputs for the same prompt.
+
+\section{Symbolic batch walkthrough}
+
+Let the batch contain $B$ prompts:
+\begin{equation}
+\mathcal{B}=\{q_1,\ldots,q_B\}.
+\end{equation}
+For each prompt $q_j$, sample $G=16$ completions:
+\begin{equation}
+\mathcal{G}_j=\{o_{j,1},\ldots,o_{j,16}\}.
+\end{equation}
+The complete rollout table is:
+\begin{center}
+\begin{tabular}{@{}c c c c@{}}
+\toprule
+Prompt & Completion & Reward & Advantage \\
+\midrule
+$q_1$ & $o_{1,1}$ & $r_{1,1}$ & $A_{1,1}$ \\
+$q_1$ & $o_{1,2}$ & $r_{1,2}$ & $A_{1,2}$ \\
+$\vdots$ & $\vdots$ & $\vdots$ & $\vdots$ \\
+$q_1$ & $o_{1,16}$ & $r_{1,16}$ & $A_{1,16}$ \\
+\midrule
+$q_2$ & $o_{2,1}$ & $r_{2,1}$ & $A_{2,1}$ \\
+$\vdots$ & $\vdots$ & $\vdots$ & $\vdots$ \\
+$q_B$ & $o_{B,16}$ & $r_{B,16}$ & $A_{B,16}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For each row, compute token log-probabilities under three policies:
+\begin{align}
+\log \pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t}) &\quad \text{current trainable policy}, \\
+\log \pi_{\theta_{\old}}(y_{j,i,t}\mid x_j,y_{j,i,<t}) &\quad \text{rollout policy}, \\
+\log \pi_{\refm}(y_{j,i,t}\mid x_j,y_{j,i,<t}) &\quad \text{reference policy}.
+\end{align}
+
+Then compute:
+\begin{align}
+\rho_{j,i,t}(\theta)
+&=\exp\left(
+\log\pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t})
+-
+\log\pi_{\theta_{\old}}(y_{j,i,t}\mid x_j,y_{j,i,<t})
+\right), \\
+\kappa_{j,i,t}(\theta)
+&=\exp\left(
+\log\pi_{\refm}(y_{j,i,t}\mid x_j,y_{j,i,<t})
+-
+\log\pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t})
+\right), \\
+d^{\mathrm{KL}}_{j,i,t}(\theta)&=\kappa_{j,i,t}(\theta)-\log\kappa_{j,i,t}(\theta)-1.
+\end{align}
+
+Finally plug these into Eq.~\eqref{eq:grpo_empirical} and update:
+\begin{equation}
+\theta \leftarrow \theta + \eta \nabla_\theta \widehat{J}_{\GRPO}(\theta)
+\end{equation}
+for learning rate $\eta$.
+
+\section{Pseudocode}
+
+\begin{enumerate}[leftmargin=*]
+  \item Initialize policy $\pi_\theta$ from the base model.
+  \item Set $\pi_{\theta_{\old}}\leftarrow \pi_\theta$ for rollout generation.
+  \item Set or periodically refresh the reference policy $\pi_{\refm}$.
+  \item Repeat:
+  \begin{enumerate}[leftmargin=*]
+    \item Sample prompts $\{q_j\}_{j=1}^{B}$.
+    \item For each $q_j$, sample $G=16$ completions $\{o_{j,i}\}_{i=1}^{G}$ from $\pi_{\theta_{\old}}$.
+    \item Compute rule-based rewards $r_{j,i}=R(q_j,o_{j,i})$.
+    \item For each prompt $j$, compute $\mu_j$, $\sigma_j$, and $A_{j,i}$.
+    \item For each token, compute the policy ratio $\rho_{j,i,t}$ and KL estimate $d^{\mathrm{KL}}_{j,i,t}$.
+    \item Maximize $\widehat{J}_{\GRPO}$, or equivalently minimize $-\widehat{J}_{\GRPO}$.
+    \item Refresh $\pi_{\theta_{\old}}$ for new rollouts.
+  \end{enumerate}
+\end{enumerate}
+
+\section{Why GRPO is a simpler post-training pipeline}
+
+\subsection{PPO-style RLHF}
+
+A simplified PPO-style LLM post-training system often has:
+\begin{itemize}[leftmargin=*]
+  \item a policy model $\pi_\theta$;
+  \item a reference model $\pi_{\refm}$;
+  \item a reward model $R_\psi$;
+  \item a value model or critic $V_\phi$;
+  \item advantage estimation, often with GAE;
+  \item PPO clipping and KL regularization.
+\end{itemize}
+
+The critic is expensive because it is usually another neural model operating over long token sequences.
+
+\subsection{GRPO}
+
+GRPO keeps the policy, old policy, and reference policy, but removes the learned critic:
+\[
+\boxed{\text{No learned } V_\phi.}
+\]
+Instead, it estimates a prompt-specific baseline from sibling completions:
+\begin{equation}
+\text{critic baseline } V_\phi(q,o_{<t})
+\quad \leadsto \quad
+\text{group baseline } \mu_j=\frac{1}{G}\sum_{i=1}^{G}r_{j,i}.
+\end{equation}
+
+This is the main computational simplification. DeepSeekMath introduced GRPO as a PPO variant that foregoes the critic model and estimates the baseline from group scores, reducing training resources \cite{shao2024deepseekmath}. DeepSeek-R1-Zero then uses GRPO for large-scale reasoning RL directly from the base model \cite{guo2025r1}.
+
+\section{PPO versus GRPO}
+
+\begin{center}
+\begin{tabular}{@{}p{0.30\textwidth}p{0.30\textwidth}p{0.30\textwidth}@{}}
+\toprule
+Aspect & PPO-style RLHF & GRPO \\
+\midrule
+Baseline / advantage & Learned value model $V_\phi$ and GAE-style advantage & Group-relative reward normalization \\
+Extra critic model? & Yes & No \\
+Prompt handling & Advantage may depend on token state through critic & $G$ sibling completions for same prompt define relative score \\
+Reward type & Often neural reward model plus KL penalty & R1-Zero mainly rule-based accuracy and format rewards \\
+Credit assignment & Potentially token-level via critic & Same sequence-level advantage assigned to all completion tokens \\
+Main cost & Policy + reward model + critic training/inference & Many rollouts per prompt; long generations \\
+Main simplification & --- & Removes critic and avoids neural reward model in R1-Zero \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+PPO itself is a policy-gradient method that alternates between sampling data and optimizing a surrogate objective, with clipping used to keep updates controlled \cite{schulman2017ppo}. GRPO inherits this PPO-style clipping idea but changes how the advantage is estimated.
+
+\section{What the model learns}
+
+The training objective does not explicitly say:
+\[
+\text{``reflect,'' ``verify,'' or ``think longer.''}
+\]
+Rather, it rewards completions that solve verifiable problems and satisfy the required format. If longer reasoning, self-checking, or re-planning increases correctness, then those behaviors can become more probable under the policy.
+
+This gives a useful teaching slogan:
+\[
+\boxed{\text{R1-Zero does not imitate reasoning traces; it is incentivized to discover useful reasoning behavior.}}
+\]
+
+The R1-Zero paper reports emergent behaviors such as self-verification, reflection, and longer chain-of-thought-like computation during RL, but also reports drawbacks such as poor readability and language mixing \cite{guo2025r1}.
+
+\section{Limitations and failure modes}
+
+\paragraph{1. Verifiable rewards are required.}
+R1-Zero-style RL is most natural when correctness can be checked. Math and code fit this setting better than open-ended writing.
+
+\paragraph{2. Sparse rewards can give no signal.}
+If all 16 completions are wrong, then all rewards may be equal. The group-relative advantage is then zero or numerically unstable. This means sampling diversity and problem difficulty matter.
+
+\paragraph{3. Coarse credit assignment.}
+A single scalar reward gives the same advantage to every token in a completion. Good and bad intermediate steps are not separately labeled.
+
+\paragraph{4. Reward hacking remains possible.}
+Even rule-based rewards can be gamed if the parser, unit tests, or format checker are weak.
+
+\paragraph{5. Rollout cost is high.}
+Sampling $G=16$ long completions per prompt is expensive, especially when maximum generation length is tens of thousands of tokens.
+
+\paragraph{6. Readability is not guaranteed.}
+R1-Zero can learn to solve problems while producing outputs that are difficult for humans to read. This motivates the full DeepSeek-R1 pipeline.
+
+\section{Short contrast: DeepSeek-R1-Zero versus DeepSeek-R1}
+
+\subsection{DeepSeek-R1-Zero}
+
+\begin{equation}
+\boxed{\text{Base model}}
+\xrightarrow{\text{GRPO RL, rule-based rewards}}
+\boxed{\text{R1-Zero}}.
+\end{equation}
+
+Properties:
+\begin{itemize}[leftmargin=*]
+  \item no preliminary supervised fine-tuning stage;
+  \item emphasizes pure RL self-evolution;
+  \item uses rule-based rewards for verifiable reasoning;
+  \item shows strong reasoning but has readability and language-mixing issues.
+\end{itemize}
+
+\subsection{DeepSeek-R1}
+
+DeepSeek-R1 adds a more elaborate multi-stage pipeline:
+\begin{equation}
+\begin{array}{c}
+\text{Base model} \\
+\downarrow \; \text{cold-start SFT on thousands of long-CoT examples} \\
+\text{initial reasoning actor} \\
+\downarrow \; \text{reasoning-oriented RL} \\
+\text{RL checkpoint} \\
+\downarrow \; \text{rejection sampling + SFT data construction} \\
+\text{SFT model on reasoning and non-reasoning data} \\
+\downarrow \; \text{final RL for reasoning, helpfulness, and harmlessness} \\
+\text{DeepSeek-R1.}
+\end{array}
+\end{equation}
+
+According to the R1 paper, the full R1 pipeline uses thousands of cold-start examples, then reasoning-oriented RL, then rejection sampling to collect about 600k reasoning samples plus about 200k non-reasoning samples, then another SFT stage and a final RL stage across broader scenarios \cite{guo2025r1}. The key difference is that R1-Zero is the clean experiment showing that reasoning can be incentivized directly through RL, while R1 is the more practical pipeline for a readable and generally useful assistant.
+
+\section{Board-work derivation}
+
+A compact derivation suitable for the board:
+
+\paragraph{Step A: Start from expected reward.}
+\begin{equation}
+J(\theta)=\E_{q,o\sim\pi_\theta}[R(q,o)].
+\end{equation}
+
+\paragraph{Step B: Policy gradient.}
+\begin{equation}
+\nabla J(\theta)=\E[R(q,o)\nabla\log\pi_\theta(o\mid q)].
+\end{equation}
+
+\paragraph{Step C: Add a baseline.}
+\begin{equation}
+\nabla J(\theta)=\E[(R(q,o)-b(q))\nabla\log\pi_\theta(o\mid q)].
+\end{equation}
+
+\paragraph{Step D: Replace learned baseline by group baseline.}
+\begin{equation}
+ b(q_j)\approx \mu_j=\frac{1}{G}\sum_{i=1}^{G}R(q_j,o_{j,i}).
+\end{equation}
+
+\paragraph{Step E: Normalize.}
+\begin{equation}
+A_{j,i}=\frac{R(q_j,o_{j,i})-\mu_j}{\sigma_j}.
+\end{equation}
+
+\paragraph{Step F: Use PPO-style ratio and clipping.}
+\begin{equation}
+\rho_{j,i,t}(\theta)=\frac{\pi_\theta(y_{j,i,t}\mid x_j,y_{j,i,<t})}
+{\pi_{\theta_{\old}}(y_{j,i,t}\mid x_j,y_{j,i,<t})}.
+\end{equation}
+\begin{equation}
+\ell_{j,i,t}^{\mathrm{clip}}
+=\min\left(\rho_{j,i,t}A_{j,i},\clip(\rho_{j,i,t},1-\varepsilon,1+\varepsilon)A_{j,i}\right).
+\end{equation}
+
+\paragraph{Step G: Add KL regularization.}
+\begin{equation}
+\widehat{J}_{\GRPO}
+=\frac{1}{BG}\sum_{j=1}^{B}\sum_{i=1}^{G}\frac{1}{T_{j,i}}\sum_{t=1}^{T_{j,i}}
+\left(\ell_{j,i,t}^{\mathrm{clip}}-\beta d_{j,i,t}^{\mathrm{KL}}\right).
+\end{equation}
+
+\section{Suggested in-class questions}
+
+\begin{enumerate}[leftmargin=*]
+  \item Suppose all $G=16$ completions for a prompt receive reward 0. What are the advantages? What update signal remains?
+  \item Suppose one completion is correct and the other 15 are wrong. Which completion receives positive advantage? What happens to the incorrect completions?
+  \item Why is it useful to normalize rewards within each prompt instead of across the whole batch?
+  \item What is the difference between $\pi_{\theta_{\old}}$ and $\pi_{\refm}$?
+  \item Why does removing the critic simplify training? What cost does GRPO add instead?
+  \item Why might R1-Zero produce strong reasoning but poor readability?
+\end{enumerate}
+
+\section{Takeaways}
+
+\begin{enumerate}[leftmargin=*]
+  \item DeepSeek-R1-Zero is a clean demonstration of reasoning-oriented RL directly from a base model, without a cold-start SFT stage.
+  \item GRPO samples multiple completions for the same prompt and converts their rewards into group-relative advantages.
+  \item The method removes the learned critic/value model used in PPO-style actor-critic RL.
+  \item The training signal is simple: increase token probabilities for completions that outperform sibling completions, decrease them for completions that underperform, and regularize the policy with KL.
+  \item Rule-based rewards make the pipeline simpler, especially for math and code, but limit the method to tasks where correctness is checkable.
+  \item DeepSeek-R1 extends R1-Zero with cold-start SFT, rejection sampling, further SFT, and final RL for a more readable and general assistant.
+\end{enumerate}
+
+\begin{thebibliography}{9}
+
+\bibitem{guo2025r1}
+Daya Guo et al.
+\newblock \emph{DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning}.
+\newblock arXiv:2501.12948, 2025.
+\newblock \url{https://arxiv.org/abs/2501.12948}
+
+\bibitem{guo2025nature}
+Daya Guo et al.
+\newblock \emph{DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning}.
+\newblock Nature, 2025.
+\newblock \url{https://www.nature.com/articles/s41586-025-09422-z}
+
+\bibitem{shao2024deepseekmath}
+Zhihong Shao et al.
+\newblock \emph{DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models}.
+\newblock arXiv:2402.03300, 2024.
+\newblock \url{https://arxiv.org/abs/2402.03300}
+
+\bibitem{schulman2017ppo}
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+\newblock \emph{Proximal Policy Optimization Algorithms}.
+\newblock arXiv:1707.06347, 2017.
+\newblock \url{https://arxiv.org/abs/1707.06347}
+
+\end{thebibliography}
+
+\end{document}
