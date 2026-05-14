@@ -213,6 +213,12 @@ Use of AI coding assistants **is permitted**. However, you should explicitly att
 
 ### Week 11 Information Retrieval and Retrieval-Augmented Generation
 
+> In this lecture, we introduce dense retrieval and Retrieval-Augmented Generation (RAG). RAG augments a language model with a non-parametric memory — a retrievable document index — so that answers can be grounded in up-to-date, verifiable sources without retraining the model.
+> - **Slides:** <a href="https://baojian.github.io/llm-26/slides/lecture-10-slides/lecture-10-slides.pdf" target="_blank" rel="noopener">Lecture 10 slides (PDF)</a>
+> - **Readings:**
+>   - <a href="papers/lecture-10-readings-0-JM_Book_Chapter_11.pdf" target="_blank" rel="noopener">JM Book Chapter 11: Information Retrieval</a>
+> - **Excercise: <a href="https://github.com/baojian/llm-26/blob/main/lecture-10-rag/lecture-10-rag.ipynb" target="_blank" rel="noopener">lecture-10-rag.ipynb</a>**
+
 ### Week 12 Course Project Presentation
 
 > Each group presents preliminary results in class on **05/21/2026**.
